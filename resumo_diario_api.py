@@ -1,17 +1,34 @@
 import streamlit as st
 import pandas as pd
-from st_aggrid import GridOptionsBuilder, AgGrid, GridUpdateMode, DataReturnMode
+from st_aggrid import GridOptionsBuilder, AgGrid
 from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 from datetime import datetime, timedelta
 import requests
 from requests.auth import HTTPBasicAuth
-import csv, pytz
+import csv, pytz, base64
+from io import StringIO
 
-# Funções para obter os tickets do Freshdesk e gravar em um CSV
+#Initial page configurations
+st.set_page_config(
+    #layout="wide",
+    page_title="Sup summary",
+    )
+st.set_option('deprecation.showfileUploaderEncoding', False)
+
+st.markdown("""
+1. Todo os tickets em aberto serão solicitados à API clicando em "Get Tickets"
+2. Baixe o arquivo gerado(Link aparecerá abaixo do botão)
+3. Arraste para a caixa de upload
+""")
+
+#Open the file
+
+csv_data = st.file_uploader(label='Importe o CSV do resumo', type=['csv'])
+
 def get_not_closed_or_resolved_tickets():
     url = "https://azion.freshdesk.com/api/v2/tickets"
-  #API KEY HEEEEEEEEEEREEEEEEEEEEEEEEEEE
-    auth = HTTPBasicAuth("YOUR-API-KEY-HERE-VICTOR", "X")
+    # Colocar chave da aAPI da Freshdesk AQUI
+    auth = HTTPBasicAuth("API_KEY_FRESHDESK_AQUI_TIME", "X")
 
     six_months_ago = datetime.now() - timedelta(days=6*30)
     six_months_ago_str = six_months_ago.strftime("%Y-%m-%d")
@@ -21,7 +38,7 @@ def get_not_closed_or_resolved_tickets():
         1063787817: 'Fernando vargas',
         1063206866: 'Lucas Aguiar',
         1065525755: 'Sergio Ferreira',
-        1066023006: 'matheus chandelier',
+        1066023006: 'Chandelier',
         1062339453: 'Gregory Peres',
         1059647349: 'Eduardo Santos',
         1065525758: 'Alvin Michels',
@@ -54,19 +71,33 @@ def get_not_closed_or_resolved_tickets():
     return not_closed_or_resolved_tickets
 
 def write_to_csv(tickets):
-    with open('tickets.csv', 'w', newline='', encoding='utf-8-sig') as file:
-        writer = csv.writer(file)
-        writer.writerow(["Ticket ID", "Subject", "Type", "Agent", "Last update time"])
-        
-        for ticket in tickets:
-            writer.writerow([ticket["id"], ticket["subject"], ticket["type"], ticket["responder_id"], ticket["updated_at"]])
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Ticket ID", "Subject", "Type", "Agent", "Last update time"])
+    
+    for ticket in tickets:
+        writer.writerow([ticket["id"], ticket["subject"], ticket["type"], ticket["responder_id"], ticket["updated_at"]])
+    
+    # Convert to bytes and then encode in base64
+    output_str = output.getvalue()
+    b64 = base64.b64encode(output_str.encode('utf-8-sig')).decode()
 
-# Gera o CSV
-tickets = get_not_closed_or_resolved_tickets()
-write_to_csv(tickets)
+    # Use the markdown component of Streamlit to display the download link
+    href = f'<a href="data:file/csv;base64,{b64}" download="tickets.csv">Download Tickets CSV File</a>'
+    st.markdown(href, unsafe_allow_html=True)
 
-if tickets is not None:
-    df = pd.read_csv('tickets.csv')
+
+# Cria um botão no Streamlit para obter os tickets
+if st.button('Get Tickets'):
+    # Se o botão for clicado, obtenha os tickets e grave-os em um CSV
+    tickets = get_not_closed_or_resolved_tickets()
+    write_to_csv(tickets)
+
+st.write(":triangular_flag_on_post:  - :skull:  -  :knife:")
+
+if csv_data is not None:
+     # Carrega o CSV gerado para um DataFrame
+    df = pd.read_csv(csv_data)
     df2 = df.copy()
 
     # Convert 'Last update time' to datetime
@@ -80,9 +111,9 @@ if tickets is not None:
 
     # Check if update is needed (more than 2 days without update, or more than 4 days if includes a weekend)
     df['updt?'] = df.apply(lambda row: True if row['last update'] > 2 or 
-                                  (row['last update'] > 4 and 
-                                   ((row['Last update time'].weekday() < 5 and 
-                                     row['Last update time'] + timedelta(days=row['last update']).weekday() >= 5) or
+                                (row['last update'] > 4 and 
+                                ((row['Last update time'].weekday() < 5 and 
+                                    row['Last update time'] + timedelta(days=row['last update']).weekday() >= 5) or
                                     row['Last update time'].weekday() >= 5)) else False, axis=1)
 
     #Change the data, adding patterns for slack use
@@ -101,6 +132,11 @@ if tickets is not None:
     #DEFINE COLUMNS THAT WILL APPEAR
     df = df[['tkt_id', 'last update', "Agent", "Ticket ID", 'updt?']]
 
+
+    #Impedir que fique atualizando ao escrever
+    gb = GridOptionsBuilder.from_dataframe(df)
+    gb.configure_grid_options(enableCellChangeFlash=False, suppressFlashOnNewData=True)
+    
     #AG-GRID Lib configurations
     gb = GridOptionsBuilder.from_dataframe(df)
     groupDefaultExpanded= 1,
@@ -121,8 +157,8 @@ if tickets is not None:
         width=100,
         maxWidth = 82,
         cellRenderer=JsCode('''function(params)  {
-  if (params.value != undefined)
-  {return '<a href="https://tickets.azion.com/a/tickets/' + params.value + '" target="_blank">'+params.value+'</a>'}}''')
+    if (params.value != undefined)
+    {return '<a href="https://tickets.azion.com/a/tickets/' + params.value + '" target="_blank">'+params.value+'</a>'}}''')
         )
     #Define column pattern using de dataFrame information
     gb.configure_column(
@@ -141,8 +177,8 @@ if tickets is not None:
         header_name="updt?",
         field="updt?",
         hide=True,
-)
-    
+    )
+
     gb.configure_column(
     header_name="last update",
     field="last update",
@@ -153,14 +189,14 @@ if tickets is not None:
             return {}
         }
     }''')
-)
-    
+    )
+
     gb.configure_column(
         header_name="L.Upd",
         field="last update",
         width=25,
         maxWidth = 150
-)
+    )
     #Define column pattern using de dataFrame information
     gb.configure_column(
         header_name= "Link",
@@ -181,5 +217,5 @@ if tickets is not None:
             groupDefaultExpanded= -1,
             enable_enterprise_modules=True,  
         )
-        
+
 
