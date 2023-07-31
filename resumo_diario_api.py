@@ -44,7 +44,8 @@ def get_not_closed_or_resolved_tickets():
         1065525758: 'Alvin Michels',
         1059146958: 'Mateus Soares',
         1057249584: 'Eric Farias',
-        1061673187: 'Lucas da Costa Furno'
+        1061673187: 'Lucas da Costa Furno',
+        1061916486: 'Victor Rocha'
     }
 
     not_closed_or_resolved_tickets = []
