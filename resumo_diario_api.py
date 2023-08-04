@@ -1,39 +1,42 @@
 import streamlit as st
 import pandas as pd
 from st_aggrid import GridOptionsBuilder, AgGrid
-from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
+from st_aggrid import AgGrid, JsCode
 from datetime import datetime, timedelta
 import requests
 from requests.auth import HTTPBasicAuth
 import csv, pytz, base64
 from io import StringIO
 
-#Initial page configurations
+#Criado em Python 3.11
+# Para rodar corretamente, instalar as libs com o comando "pip install streamlit pandas st-aggrid requests pytz"
+
+
+# Configuração inicial da página, titulo icone e afins ( Precisa sempre estar aqui no topo )
 st.set_page_config(
-    #layout="wide",
     page_title="Sup summary",
-    )
+)
 st.set_option('deprecation.showfileUploaderEncoding', False)
 
 st.markdown("""
-1. Todo os tickets em aberto serão solicitados à API clicando em "Get Tickets"
-2. Baixe o arquivo gerado(Link aparecerá abaixo do botão)
-3. Arraste para a caixa de upload
+Get Tickets > fazer download > arrastar para a caixa
 """)
 
-#Open the file
+# Uploader do CSV com os tickets
+csv_data = st.file_uploader(label=':triangular_flag_on_post:  - :skull:  -  :knife:', type=['csv'])
 
-csv_data = st.file_uploader(label='Importe o CSV do resumo', type=['csv'])
-
+# Cache para manter o arquivo salvo
+# Necessário rodar o código do zero todo dia, evita pegar o mesmo CSV.
+@st.cache
 def get_not_closed_or_resolved_tickets():
     url = "https://azion.freshdesk.com/api/v2/tickets"
-    # Colocar chave da aAPI da Freshdesk AQUI
-    auth = HTTPBasicAuth("API_KEY_FRESHDESK_AQUI_TIME", "X")
+    auth = HTTPBasicAuth("SUA CHAVE DA API FRESHDESK AQUI", "X")
 
     six_months_ago = datetime.now() - timedelta(days=6*30)
     six_months_ago_str = six_months_ago.strftime("%Y-%m-%d")
     params = {'updated_since': six_months_ago_str, 'per_page': 100}
 
+    #Dicionário com os IDS - Nomes dos técnicos - API do freshdesk entrega números.
     agent_mapping = {
         1063787817: 'Fernando vargas',
         1063206866: 'Lucas Aguiar',
@@ -49,7 +52,7 @@ def get_not_closed_or_resolved_tickets():
     }
 
     not_closed_or_resolved_tickets = []
-
+#Conferir se API respondeu corretamente a request
     page = 1
     while True:
         params['page'] = page
@@ -79,7 +82,7 @@ def write_to_csv(tickets):
     for ticket in tickets:
         writer.writerow([ticket["id"], ticket["subject"], ticket["type"], ticket["responder_id"], ticket["updated_at"]])
     
-    # Convert to bytes and then encode in base64
+    # Converte e poe em base 64
     output_str = output.getvalue()
     b64 = base64.b64encode(output_str.encode('utf-8-sig')).decode()
 
@@ -87,37 +90,31 @@ def write_to_csv(tickets):
     href = f'<a href="data:file/csv;base64,{b64}" download="tickets.csv">Download Tickets CSV File</a>'
     st.markdown(href, unsafe_allow_html=True)
 
-
 # Cria um botão no Streamlit para obter os tickets
 if st.button('Get Tickets'):
-    # Se o botão for clicado, obtenha os tickets e grave-os em um CSV
     tickets = get_not_closed_or_resolved_tickets()
     write_to_csv(tickets)
 
-st.write(":triangular_flag_on_post:  - :skull:  -  :knife:")
-
-if csv_data is not None:
-     # Carrega o CSV gerado para um DataFrame
+# Carregar o DataFrame no estado da sessão se ele ainda não estiver carregado
+if csv_data is not None and 'df' not in st.session_state:
+ # Carrega o CSV gerado para um DataFrame
     df = pd.read_csv(csv_data)
     df2 = df.copy()
 
-    # Convert 'Last update time' to datetime
+    # Converte 'Last update time' para datetime
     df['Last update time'] = pd.to_datetime(df['Last update time']).dt.tz_convert('UTC')
 
-    # Calculate the number of last update
+    # Calcula o last update(dias)
     df['last update'] = (datetime.now(pytz.UTC) - df['Last update time']).dt.days
 
-
-
-
-    # Check if update is needed (more than 2 days without update, or more than 4 days if includes a weekend)
+    # Checa se há necessidade de atualização (mais de 2 dias sem atualização, ou mais de 4 dias se incluir um fim de semana).
     df['updt?'] = df.apply(lambda row: True if row['last update'] > 2 or 
                                 (row['last update'] > 4 and 
                                 ((row['Last update time'].weekday() < 5 and 
                                     row['Last update time'] + timedelta(days=row['last update']).weekday() >= 5) or
                                     row['Last update time'].weekday() >= 5)) else False, axis=1)
 
-    #Change the data, adding patterns for slack use
+    #Altere a estrutura para Markdown para formatação no Slack
     for index in df.index:
         df.loc[index, 'Ticket ID'] = "[" + str(int(df.loc[index, 'Ticket ID'])) + "]" + "(https://tickets.azion.com/a/tickets/" + str(int(df.loc[index, 'Ticket ID'])) +')'
         df.loc[index, 'tkt_id'] = str(int(df2.loc[index, 'Ticket ID']))
@@ -127,19 +124,22 @@ if csv_data is not None:
 
 
 
-    #Ignore if there's no Agent    
+    #Ignore se não tiver agente   
     df = df[df['Agent'] != "@No Agent"]
 
-    #DEFINE COLUMNS THAT WILL APPEAR
+    #Definir colunas que são mostradas
     df = df[['tkt_id', 'last update', "Agent", "Ticket ID", 'updt?']]
+    st.session_state.df = df
 
+# Se o DataFrame já estiver carregado no estado da sessão, basta usá-lo
+if 'df' in st.session_state:
+    df = st.session_state.df
 
-    #Impedir que fique atualizando ao escrever
     gb = GridOptionsBuilder.from_dataframe(df)
     gb.configure_grid_options(enableCellChangeFlash=False, suppressFlashOnNewData=True)
     
-    #AG-GRID Lib configurations
-    gb = GridOptionsBuilder.from_dataframe(df)
+    # AG-GRID Configuração de cada uma das colunas
+    # gb = GridOptionsBuilder.from_dataframe(df)
     groupDefaultExpanded= 1,
     gb.configure_default_column(editable=True)
     gb.configure_column('Ação tomada',
@@ -148,7 +148,6 @@ if csv_data is not None:
         cellEditorPopup=True  
     )
 
-    #Define column pattern using de dataFrame information
     gb.configure_column(
         header_name="Link", 
         field = "tkt_id",
@@ -161,7 +160,7 @@ if csv_data is not None:
     if (params.value != undefined)
     {return '<a href="https://tickets.azion.com/a/tickets/' + params.value + '" target="_blank">'+params.value+'</a>'}}''')
         )
-    #Define column pattern using de dataFrame information
+
     gb.configure_column(
         header_name= "Agent",
         field= "Agent",
@@ -198,7 +197,7 @@ if csv_data is not None:
         width=25,
         maxWidth = 150
     )
-    #Define column pattern using de dataFrame information
+
     gb.configure_column(
         header_name= "Link",
         field= "Ticket ID",
@@ -207,7 +206,7 @@ if csv_data is not None:
         #rowGroup = True,
         sortable = True
     )
-    #Grid Options
+    # Configurações do Grid
     gb.configure_grid_options(enableRangeSelection=True, groupDefaultExpanded = -1,)
     gb.configure_selection('multiple', use_checkbox=True, groupSelectsFiltered=True) 
     response = AgGrid(
@@ -220,3 +219,6 @@ if csv_data is not None:
         )
 
 
+    # Salvar as alterações feitas no DataFrame de volta no estado da sessão
+    if response['data'] is not None:
+        st.session_state.df = response['data']
